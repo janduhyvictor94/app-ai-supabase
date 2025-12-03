@@ -1,0 +1,5 @@
+{
+  "name": "Fazenda Cassiano's",
+  "description": "Aplicativo completo para gestão agrícola: controle de talhões, manejo (adubação, poda, pulverização), estoque de insumos e análise financeira de colheitas.",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Auth Callback</title>
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get("code");
+
+      if (code) {
+        localStorage.setItem("google_auth_code", code);
+        window.location.href = "/";
+      } else {
+        document.body.innerHTML = `
+          <h2 style="font-family: sans-serif; color: red">
+            Erro ao autenticar: nenhum código foi retornado.
+          </h2>`;
+      }
+    </script>
+  </head>
+  <body></body>
+</html>
