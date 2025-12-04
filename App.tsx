@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   LayoutDashboard, Trees, DollarSign, ClipboardList, Package, Plus, Trash2, 
   BrainCircuit, TrendingUp, Leaf, Calendar, Clock, PieChart, Menu, X, Save, 
@@ -34,21 +34,29 @@ const formatDate = (dateString: string) => {
 
 // --- Initial Mock Data (Fallback) ---
 const INITIAL_PLOTS: Plot[] = [
-  { id: '1', name: 'Talhão 01 - Manga Palmer', crop: 'Manga', area: 5.0, unit: 'ha' },
-  { id: '2', name: 'Talhão 02 - Goiaba Tailandesa', crop: 'Goiaba', area: 3.5, unit: 'ha' },
+  { id: '1', name: 'Talhão 01 - Manga Palmer', crop: 'Manga', area: 5.0 },
+  { id: '2', name: 'Talhão 02 - Goiaba Tailandesa', crop: 'Goiaba', area: 3.5 },
+  { id: '3', name: 'Talhão 03 - Manga Tommy', crop: 'Manga', area: 4.0 },
 ];
 
 const INITIAL_PRODUCTS: Product[] = [
-  { id: '1', name: 'NPK 20-05-20', pricePerUnit: 180, unit: UnitType.SACO, category: 'Fertilizante', currentStock: 10 },
-  { id: '2', name: 'Fungicida Cobre', pricePerUnit: 95, unit: UnitType.LITRO, category: 'Defensivo', currentStock: 5 },
+  { id: '1', name: 'NPK 20-05-20', pricePerUnit: 180, unit: UnitType.SACO, category: 'Fertilizante', currentStock: 0 },
+  { id: '2', name: 'Fungicida Cobre', pricePerUnit: 95, unit: UnitType.LITRO, category: 'Defensivo', currentStock: 0 },
+  { id: '3', name: 'Caixa Plástica', pricePerUnit: 12, unit: UnitType.UNIDADE, category: 'Outros', currentStock: 0 },
+  { id: '4', name: 'Esterco Bovino', pricePerUnit: 25, unit: UnitType.SACO, category: 'Adubo', currentStock: 0 },
 ];
 
-const INITIAL_ACTIVITIES: Activity[] = [];
-const INITIAL_HARVESTS: Harvest[] = [];
+const INITIAL_ACTIVITIES: Activity[] = [
+  { id: '1', plotId: '1', date: '2024-01-15', type: ActivityType.PODA, status: 'completed', description: 'Poda de formação pós-colheita', laborCost: 1500, productsUsed: [], totalCost: 1500 },
+  { id: '2', plotId: '2', date: '2024-02-10', type: ActivityType.ADUBACAO, status: 'completed', description: 'Adubação de produção', laborCost: 300, productsUsed: [{ productId: '1', quantity: 15 }], totalCost: 3000 },
+];
 
-// --- APP COMPONENT ---
+const INITIAL_HARVESTS: Harvest[] = [
+  { id: '1', plotId: '1', date: '2024-03-20', cropType: 'Manga', classification: 'Exportação', quantity: 2000, unit: UnitType.KG, unitPrice: 4.50, totalRevenue: 9000 },
+];
+
 export default function App() {
-  // --- Supabase Initialization (Safe) ---
+  // --- INICIALIZAÇÃO SEGURA DO SUPABASE ---
   const supabase = useMemo(() => {
     const url = import.meta.env.VITE_SUPABASE_URL;
     const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -61,42 +69,29 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showSaveNotification, setShowSaveNotification] = useState(false);
   
-  // Activity Sub-tab state
   const [activityView, setActivityView] = useState<'history' | 'planning'>('history');
-
-  // Calendar State
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [calendarPlotId, setCalendarPlotId] = useState('');
-
-  // Report Sub-state
   const [reportMode, setReportMode] = useState<'plot' | 'general'>('general');
   const [selectedReportPlotId, setSelectedReportPlotId] = useState<string>('');
-
-  // Editing State
   const [editingId, setEditingId] = useState<string | null>(null);
+  
+  const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; type: 'plot' | 'product' | 'activity' | 'harvest' | null; id: string | null; }>({ isOpen: false, type: null, id: null });
 
-  // Delete Modal State
-  const [deleteModal, setDeleteModal] = useState<{
-    isOpen: boolean;
-    type: 'plot' | 'product' | 'activity' | 'harvest' | null;
-    id: string | null;
-  }>({ isOpen: false, type: null, id: null });
-
-  // --- DATA STATE (Inicializado Vazio ou com Mock, carregado via Supabase) ---
+  // --- Data State (Inicializado Vazio ou com Mock, carregado via Supabase) ---
   const [plots, setPlots] = useState<Plot[]>(INITIAL_PLOTS);
   const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
   const [activities, setActivities] = useState<Activity[]>(INITIAL_ACTIVITIES);
   const [harvests, setHarvests] = useState<Harvest[]>(INITIAL_HARVESTS);
 
-  // Dynamic Lists State
   const [availableActivityTypes, setAvailableActivityTypes] = useState<string[]>(Object.values(ActivityType));
   const [availableCategories, setAvailableCategories] = useState<string[]>(['Fertilizante', 'Defensivo', 'Adubo', 'Outros']);
 
   // --- SUPABASE: LEITURA DE DADOS ---
   useEffect(() => {
     const loadData = async () => {
-      if (!supabase) return;
-      const loadedData = await fetchData(); // Função importada do seu serviço
+      if (!supabase) return; // Evita erro se não configurado
+      const loadedData = await fetchData();
       
       if (loadedData) {
         setPlots(loadedData.plots || INITIAL_PLOTS);
@@ -120,44 +115,16 @@ export default function App() {
 
   const [showActivityForm, setShowActivityForm] = useState(false);
   
-  // Date Helper
   const getTodayLocal = () => {
     const d = new Date();
     return new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
   };
-
-  const [newActivity, setNewActivity] = useState<{
-    plotId: string;
-    type: string;
-    status: 'completed' | 'planned';
-    date: string;
-    description: string;
-    laborCost: number;
-    selectedProduct: string;
-    selectedQuantity: number;
-    addedProducts: { productId: string; quantity: number; cost: number }[];
-  }>({
-    plotId: '',
-    type: ActivityType.OUTROS,
-    status: 'completed',
-    date: getTodayLocal(),
-    description: '',
-    laborCost: 0,
-    selectedProduct: '',
-    selectedQuantity: 0,
-    addedProducts: []
-  });
+  
+  const [newActivity, setNewActivity] = useState<{ plotId: string; type: string; status: 'completed' | 'planned'; date: string; description: string; laborCost: number; selectedProduct: string; selectedQuantity: number; addedProducts: { productId: string; quantity: number; cost: number }[]; }>({ plotId: '', type: ActivityType.OUTROS, status: 'completed', date: getTodayLocal(), description: '', laborCost: 0, selectedProduct: '', selectedQuantity: 0, addedProducts: [] });
   const [isCustomActivityTypeInput, setIsCustomActivityTypeInput] = useState(false);
-
   const [showHarvestForm, setShowHarvestForm] = useState(false);
-  const [newHarvest, setNewHarvest] = useState<Partial<Harvest>>({ 
-    date: getTodayLocal(),
-    unit: UnitType.KG,
-    unitPrice: 0,
-    quantity: 0
-  });
+  const [newHarvest, setNewHarvest] = useState<Partial<Harvest>>({ date: getTodayLocal(), unit: UnitType.KG, unitPrice: 0, quantity: 0 });
 
-  // Analysis State
   const [aiReport, setAiReport] = useState<string>("");
   const [loadingAi, setLoadingAi] = useState(false);
 
@@ -166,32 +133,21 @@ export default function App() {
     let totalRevenue = 0;
     let totalCost = 0;
     const plotSummariesMap = new Map<string, { cost: number; revenue: number }>();
-
     plots.forEach(p => plotSummariesMap.set(p.id, { cost: 0, revenue: 0 }));
-
     activities.filter(a => a.status === 'completed').forEach(act => {
       totalCost += act.totalCost;
       const current = plotSummariesMap.get(act.plotId) || { cost: 0, revenue: 0 };
       plotSummariesMap.set(act.plotId, { ...current, cost: current.cost + act.totalCost });
     });
-
     harvests.forEach(har => {
       totalRevenue += har.totalRevenue;
       const current = plotSummariesMap.get(har.plotId) || { cost: 0, revenue: 0 };
       plotSummariesMap.set(har.plotId, { ...current, revenue: current.revenue + har.totalRevenue });
     });
-
     const plotSummaries = Array.from(plotSummariesMap.entries()).map(([plotId, data]) => {
       const plot = plots.find(p => p.id === plotId);
-      return {
-        plotId,
-        plotName: plot ? plot.name : 'Desconhecido',
-        cost: data.cost,
-        revenue: data.revenue,
-        profit: data.revenue - data.cost
-      };
+      return { plotId, plotName: plot ? plot.name : 'Desconhecido', cost: data.cost, revenue: data.revenue, profit: data.revenue - data.cost };
     });
-
     return { totalRevenue, totalCost, netProfit: totalRevenue - totalCost, plotSummaries };
   }, [plots, activities, harvests]);
 
@@ -210,13 +166,8 @@ export default function App() {
   }, [activities]);
 
   // --- Calendar Helpers ---
-  const changeMonth = (offset: number) => {
-    setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() + offset, 1));
-  };
-  const getMonthName = (date: Date) => {
-    const name = date.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
-    return name.charAt(0).toUpperCase() + name.slice(1);
-  };
+  const changeMonth = (offset: number) => { setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() + offset, 1)); };
+  const getMonthName = (date: Date) => { const name = date.toLocaleString('pt-BR', { month: 'long', year: 'numeric' }); return name.charAt(0).toUpperCase() + name.slice(1); };
   
   const timelineData = useMemo(() => {
     const year = calendarDate.getFullYear();
@@ -229,10 +180,7 @@ export default function App() {
       return true;
     });
     const grouped: Record<string, Activity[]> = {};
-    filtered.forEach(a => {
-      if (!grouped[a.date]) grouped[a.date] = [];
-      grouped[a.date].push(a);
-    });
+    filtered.forEach(a => { if (!grouped[a.date]) grouped[a.date] = []; grouped[a.date].push(a); });
     return Object.keys(grouped).sort().map(date => ({ date, items: grouped[date] }));
   }, [activities, calendarDate, calendarPlotId]);
 
@@ -246,29 +194,16 @@ export default function App() {
     return ['Padrão', 'Segunda', 'Descarte'];
   };
 
-  const handleNavClick = (tab: typeof activeTab) => {
-    setActiveTab(tab);
-    setIsMobileMenuOpen(false);
-  };
+  const handleNavClick = (tab: typeof activeTab) => { setActiveTab(tab); setIsMobileMenuOpen(false); };
 
   // --- SUPABASE: ESCRITA DE DADOS ---
   const handleManualSave = async () => {
     if (!supabase) {
-        alert("Erro de Configuração: Cliente Supabase não inicializado. Verifique as chaves VITE_ na Vercel.");
+        alert("Erro: Cliente Supabase não inicializado. Verifique as chaves VITE_ na Vercel.");
         return;
     }
-
-    const dataToSave = {
-        plots,
-        products,
-        activities,
-        harvests,
-        activityTypes: availableActivityTypes,
-        categories: availableCategories
-    };
-
-    const success = await saveData(dataToSave as any); // Função importada do serviço
-    
+    const dataToSave = { plots, products, activities, harvests, activityTypes: availableActivityTypes, categories: availableCategories };
+    const success = await saveData(dataToSave as any); // Importado do serviço
     if (success) {
         setShowSaveNotification(true);
         setTimeout(() => setShowSaveNotification(false), 3000);
@@ -279,8 +214,7 @@ export default function App() {
 
   const downloadProject = async () => {
     const zip = new JSZip();
-    zip.file("README.md", "Fazenda Cassiano's App Backup");
-    // Adicione mais arquivos aqui se necessário para backup
+    zip.file("README.md", "Projeto Fazenda Cassiano's. Dados no Supabase.");
     const content = await zip.generateAsync({ type: "blob" });
     const url = window.URL.createObjectURL(content);
     const a = document.createElement("a");
@@ -290,10 +224,7 @@ export default function App() {
     window.URL.revokeObjectURL(url);
   };
 
-  const openDeleteModal = (e: React.MouseEvent, type: 'plot' | 'product' | 'activity' | 'harvest', id: string) => {
-    e.stopPropagation();
-    setDeleteModal({ isOpen: true, type, id });
-  };
+  const openDeleteModal = (e: React.MouseEvent, type: 'plot' | 'product' | 'activity' | 'harvest', id: string) => { e.stopPropagation(); setDeleteModal({ isOpen: true, type, id }); };
 
   const confirmDelete = () => {
     const { type, id } = deleteModal;
@@ -305,41 +236,17 @@ export default function App() {
     setDeleteModal({ isOpen: false, type: null, id: null });
   };
 
-  const handleEditPlot = (e: React.MouseEvent, plot: Plot) => {
-    e.stopPropagation();
-    setNewPlot(plot);
-    setEditingId(plot.id);
-    setShowPlotForm(true);
-  };
-
-  const handleEditProduct = (e: React.MouseEvent, product: Product) => {
-    e.stopPropagation();
-    setNewProduct(product);
-    setEditingId(product.id);
-    setIsCustomCategoryInput(false);
-    setShowProductForm(true);
-  };
-
+  const handleEditPlot = (e: React.MouseEvent, plot: Plot) => { e.stopPropagation(); setNewPlot(plot); setEditingId(plot.id); setShowPlotForm(true); };
+  const handleEditProduct = (e: React.MouseEvent, product: Product) => { e.stopPropagation(); setNewProduct(product); setEditingId(product.id); setIsCustomCategoryInput(false); setShowProductForm(true); };
+  
   const handleEditActivity = (e: React.MouseEvent, activity: Activity) => {
     e.stopPropagation();
     const reconstructedProducts = activity.productsUsed.map(item => {
       const prod = products.find(p => p.id === item.productId);
       return { productId: item.productId, quantity: item.quantity, cost: prod ? prod.pricePerUnit * item.quantity : 0 };
     });
-    setNewActivity({
-      plotId: activity.plotId,
-      type: activity.type,
-      status: activity.status,
-      date: activity.date,
-      description: activity.description,
-      laborCost: activity.laborCost,
-      selectedProduct: '',
-      selectedQuantity: 0,
-      addedProducts: reconstructedProducts
-    });
-    setEditingId(activity.id);
-    setIsCustomActivityTypeInput(false);
-    setShowActivityForm(true);
+    setNewActivity({ plotId: activity.plotId, type: activity.type, status: activity.status, date: activity.date, description: activity.description, laborCost: activity.laborCost, selectedProduct: '', selectedQuantity: 0, addedProducts: reconstructedProducts });
+    setEditingId(activity.id); setIsCustomActivityTypeInput(false); setShowActivityForm(true);
   };
 
   const handleDuplicateActivity = (e: React.MouseEvent, activity: Activity) => {
@@ -348,50 +255,26 @@ export default function App() {
       const prod = products.find(p => p.id === item.productId);
       return { productId: item.productId, quantity: item.quantity, cost: prod ? prod.pricePerUnit * item.quantity : 0 };
     });
-    setNewActivity({
-      plotId: activity.plotId,
-      type: activity.type,
-      status: activity.status,
-      date: getTodayLocal(), 
-      description: activity.description,
-      laborCost: activity.laborCost,
-      selectedProduct: '',
-      selectedQuantity: 0,
-      addedProducts: reconstructedProducts
-    });
-    setEditingId(null);
-    setIsCustomActivityTypeInput(false);
-    setShowActivityForm(true);
+    setNewActivity({ plotId: activity.plotId, type: activity.type, status: activity.status, date: getTodayLocal(), description: activity.description, laborCost: activity.laborCost, selectedProduct: '', selectedQuantity: 0, addedProducts: reconstructedProducts });
+    setEditingId(null); setIsCustomActivityTypeInput(false); setShowActivityForm(true);
   };
 
-  const handleEditHarvest = (e: React.MouseEvent, harvest: Harvest) => {
-    e.stopPropagation();
-    setNewHarvest(harvest);
-    setEditingId(harvest.id);
-    setShowHarvestForm(true);
-  };
+  const handleEditHarvest = (e: React.MouseEvent, harvest: Harvest) => { e.stopPropagation(); setNewHarvest(harvest); setEditingId(harvest.id); setShowHarvestForm(true); };
 
   const handleSavePlot = () => {
     if (newPlot.name && newPlot.area) {
       if (editingId) setPlots(plots.map(p => p.id === editingId ? { ...newPlot, id: editingId } as Plot : p));
       else setPlots([...plots, { ...newPlot, id: Date.now().toString() } as Plot]);
-      setNewPlot({ crop: 'Manga' });
-      setEditingId(null);
-      setShowPlotForm(false);
+      setNewPlot({ crop: 'Manga' }); setEditingId(null); setShowPlotForm(false);
     }
   };
 
   const handleSaveProduct = () => {
     if (newProduct.name && newProduct.pricePerUnit && newProduct.category) {
-      if (isCustomCategoryInput && !availableCategories.includes(newProduct.category)) {
-        setAvailableCategories([...availableCategories, newProduct.category]);
-      }
+      if (isCustomCategoryInput && !availableCategories.includes(newProduct.category)) setAvailableCategories([...availableCategories, newProduct.category]);
       if (editingId) setProducts(products.map(p => p.id === editingId ? { ...newProduct, id: editingId } as Product : p));
       else setProducts([...products, { ...newProduct, id: Date.now().toString() } as Product]);
-      setNewProduct({ category: 'Outros', unit: UnitType.UNIDADE });
-      setEditingId(null);
-      setShowProductForm(false);
-      setIsCustomCategoryInput(false);
+      setNewProduct({ category: 'Outros', unit: UnitType.UNIDADE }); setEditingId(null); setShowProductForm(false); setIsCustomCategoryInput(false);
     }
   };
 
@@ -400,40 +283,21 @@ export default function App() {
       const prod = products.find(p => p.id === newActivity.selectedProduct);
       if (prod) {
         const cost = prod.pricePerUnit * newActivity.selectedQuantity;
-        setNewActivity({
-          ...newActivity,
-          addedProducts: [...newActivity.addedProducts, { productId: prod.id, quantity: newActivity.selectedQuantity, cost }],
-          selectedProduct: '', selectedQuantity: 0
-        });
+        setNewActivity({ ...newActivity, addedProducts: [...newActivity.addedProducts, { productId: prod.id, quantity: newActivity.selectedQuantity, cost }], selectedProduct: '', selectedQuantity: 0 });
       }
     }
   };
 
   const handleSaveActivity = () => {
     if (newActivity.plotId && newActivity.type) {
-      if (isCustomActivityTypeInput && !availableActivityTypes.includes(newActivity.type)) {
-        setAvailableActivityTypes([...availableActivityTypes, newActivity.type]);
-      }
+      if (isCustomActivityTypeInput && !availableActivityTypes.includes(newActivity.type)) setAvailableActivityTypes([...availableActivityTypes, newActivity.type]);
       const productsCost = newActivity.addedProducts.reduce((acc, curr) => acc + curr.cost, 0);
       const totalCost = Number(newActivity.laborCost) + productsCost;
-      const activityData: Activity = {
-        id: editingId || Date.now().toString(),
-        plotId: newActivity.plotId,
-        date: newActivity.date,
-        type: newActivity.type,
-        status: newActivity.status,
-        description: newActivity.description,
-        laborCost: Number(newActivity.laborCost),
-        productsUsed: newActivity.addedProducts.map(ap => ({ productId: ap.productId, quantity: ap.quantity })),
-        totalCost
-      };
+      const activityData: Activity = { id: editingId || Date.now().toString(), plotId: newActivity.plotId, date: newActivity.date, type: newActivity.type, status: newActivity.status, description: newActivity.description, laborCost: Number(newActivity.laborCost), productsUsed: newActivity.addedProducts.map(ap => ({ productId: ap.productId, quantity: ap.quantity })), totalCost };
       if (editingId) setActivities(activities.map(a => a.id === editingId ? activityData : a));
       else setActivities([activityData, ...activities]);
-      
       setNewActivity({ plotId: '', type: ActivityType.OUTROS, status: 'completed', date: getTodayLocal(), description: '', laborCost: 0, selectedProduct: '', selectedQuantity: 0, addedProducts: [] });
-      setEditingId(null);
-      setShowActivityForm(false);
-      setIsCustomActivityTypeInput(false);
+      setEditingId(null); setShowActivityForm(false); setIsCustomActivityTypeInput(false);
       if (activityData.status === 'planned') { setActiveTab('activities'); setActivityView('planning'); }
     }
   };
@@ -442,22 +306,10 @@ export default function App() {
     if (newHarvest.plotId && newHarvest.quantity && newHarvest.unitPrice) {
        const plot = plots.find(p => p.id === newHarvest.plotId);
        const totalRevenue = Number(newHarvest.quantity) * Number(newHarvest.unitPrice);
-       const harvestData: Harvest = {
-         id: editingId || Date.now().toString(),
-         plotId: newHarvest.plotId!,
-         date: newHarvest.date!,
-         cropType: plot?.crop || 'Outros',
-         classification: newHarvest.classification || 'Padrão',
-         quantity: Number(newHarvest.quantity),
-         unit: newHarvest.unit || UnitType.KG,
-         unitPrice: Number(newHarvest.unitPrice),
-         totalRevenue: totalRevenue
-       };
+       const harvestData: Harvest = { id: editingId || Date.now().toString(), plotId: newHarvest.plotId!, date: newHarvest.date!, cropType: plot?.crop || 'Outros', classification: newHarvest.classification || 'Padrão', quantity: Number(newHarvest.quantity), unit: newHarvest.unit || UnitType.KG, unitPrice: Number(newHarvest.unitPrice), totalRevenue: totalRevenue };
        if (editingId) setHarvests(harvests.map(h => h.id === editingId ? harvestData : h));
        else setHarvests([harvestData, ...harvests]);
-       setNewHarvest({ date: getTodayLocal(), unit: UnitType.KG, quantity: 0, unitPrice: 0 });
-       setEditingId(null);
-       setShowHarvestForm(false);
+       setNewHarvest({ date: getTodayLocal(), unit: UnitType.KG, quantity: 0, unitPrice: 0 }); setEditingId(null); setShowHarvestForm(false);
     }
   };
 
@@ -468,15 +320,20 @@ export default function App() {
     setLoadingAi(false);
   };
 
-  // --- SAFE RENDER CHECK ---
+  // --- TRATAMENTO DE ERRO DE CONFIGURAÇÃO (RESOLVE TELA BRANCA) ---
   if (!supabase) {
     return (
         <div className="flex flex-col items-center justify-center h-screen bg-gray-100 text-center p-10">
             <div className="bg-white p-8 rounded-xl shadow-xl max-w-lg">
                 <AlertTriangle className="w-16 h-16 text-red-500 mx-auto mb-4" />
                 <h1 className="text-2xl font-bold text-gray-800 mb-2">Erro de Configuração</h1>
-                <p className="text-gray-600">Não foi possível conectar ao Supabase. Verifique as chaves VITE_ na Vercel.</p>
-                <button onClick={() => window.location.reload()} className="mt-4 w-full bg-blue-600 text-white font-bold py-2 px-4 rounded hover:bg-blue-700 transition">Recarregar</button>
+                <p className="text-gray-600 mb-6">
+                    O cliente Supabase não pôde ser inicializado. Por favor, verifique se as variáveis 
+                    <span className="font-mono bg-gray-200 p-1 rounded mx-1">VITE_SUPABASE_URL</span> e 
+                    <span className="font-mono bg-gray-200 p-1 rounded mx-1">VITE_SUPABASE_ANON_KEY</span> 
+                    estão corretas e definidas na Vercel.
+                </p>
+                <button onClick={() => window.location.reload()} className="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded hover:bg-blue-700 transition">Recarregar Página</button>
             </div>
         </div>
     );
@@ -718,6 +575,190 @@ export default function App() {
               </div>
             ))}
           </div>
+        )}
+
+        {activeTab === 'calendar' && (
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 animate-fade-in">
+             <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 sticky top-0 bg-white z-10 py-2 border-b border-gray-100">
+                <div className="flex items-center space-x-4">
+                  <div className="flex items-center bg-gray-100 rounded-lg p-1">
+                    <button onClick={() => changeMonth(-1)} className="p-2 hover:bg-white rounded-md transition-shadow text-gray-700"><ChevronLeft className="w-5 h-5" /></button>
+                    <span className="px-4 font-bold text-lg text-gray-900 w-40 text-center">{getMonthName(calendarDate)}</span>
+                    <button onClick={() => changeMonth(1)} className="p-2 hover:bg-white rounded-md transition-shadow text-gray-700"><ChevronRight className="w-5 h-5" /></button>
+                  </div>
+                </div>
+                <div className="w-full md:w-64">
+                   <select className="w-full border border-gray-200 rounded-lg p-2.5 bg-gray-50 text-gray-900 font-medium" value={calendarPlotId} onChange={e => setCalendarPlotId(e.target.value)}>
+                      <option value="">Todos os Talhões</option>
+                      {plots.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                   </select>
+                </div>
+             </div>
+             <div className="space-y-8">
+                {timelineData.length === 0 ? (
+                   <div className="text-center py-12 text-gray-500">
+                      <Calendar className="w-12 h-12 mx-auto text-gray-300 mb-3" />
+                      <p className="font-medium">Nenhuma atividade registrada neste período.</p>
+                   </div>
+                ) : (
+                  timelineData.map(({ date, items }) => (
+                     <div key={date} className="relative pl-6 border-l-2 border-blue-200 pb-2 last:pb-0 last:border-l-0">
+                        <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-blue-500 border-2 border-white shadow-sm"></div>
+                        <h3 className="text-lg font-bold text-gray-900 mb-3 flex items-center">
+                           {formatDate(date)} <span className="text-xs font-normal text-gray-500 ml-2 uppercase tracking-wide">Dia {date.split('-')[2]}</span>
+                        </h3>
+                        <div className="space-y-3">
+                           {items.map(act => (
+                              <div key={act.id} className={`p-4 rounded-lg border shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center ${act.status === 'planned' ? 'bg-purple-50 border-purple-100' : 'bg-white border-gray-200'}`}>
+                                 <div>
+                                    <div className="flex items-center space-x-2">
+                                       <span className="font-bold text-gray-800">{act.type}</span>
+                                       {act.status === 'planned' && <span className="text-[10px] bg-purple-200 text-purple-900 px-1.5 py-0.5 rounded font-bold uppercase">Agendado</span>}
+                                    </div>
+                                    <div className="text-sm text-gray-600 mt-1">
+                                       <span className="font-medium text-blue-700">{plots.find(p => p.id === act.plotId)?.name}</span> 
+                                       {act.description && <span className="mx-1 text-gray-400">-</span>}
+                                       {act.description}
+                                    </div>
+                                 </div>
+                                 <div className="mt-2 md:mt-0 text-right">
+                                    <span className="block font-bold text-gray-900">R$ {act.totalCost.toLocaleString()}</span>
+                                    {act.productsUsed.length > 0 && <span className="text-xs text-gray-500">{act.productsUsed.length} insumos</span>}
+                                 </div>
+                              </div>
+                           ))}
+                        </div>
+                     </div>
+                  ))
+                )}
+             </div>
+          </div>
+        )}
+        
+        {activeTab === 'reports' && (
+            <div className="space-y-6 animate-fade-in">
+              <div className="flex space-x-1 bg-white p-1 rounded-lg border border-gray-200 w-fit shadow-sm print:hidden">
+                  <button onClick={() => setReportMode('general')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${reportMode === 'general' ? 'bg-blue-100 text-blue-900' : 'text-gray-700 hover:bg-gray-50'}`}>Consolidado por Serviço (Geral)</button>
+                  <button onClick={() => setReportMode('plot')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${reportMode === 'plot' ? 'bg-purple-100 text-purple-900' : 'text-gray-700 hover:bg-gray-50'}`}>Análise por Talhão (Gráficos)</button>
+              </div>
+              {reportMode === 'general' ? (
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 print:shadow-none print:border-0 print:p-0">
+                  <div className="flex justify-between items-center mb-6">
+                      <h3 className="text-xl font-bold text-gray-900">Relatório Geral de Custos</h3>
+                      <button onClick={() => window.print()} className="flex items-center space-x-2 bg-gray-800 hover:bg-gray-900 text-white px-4 py-2 rounded-lg font-bold transition-colors print:hidden"><Printer className="w-4 h-4" /><span>Imprimir</span></button>
+                  </div>
+                  <h4 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">Resumo por Categoria de Serviço</h4>
+                  <div className="overflow-x-auto mb-8">
+                      <table className="w-full text-sm text-left border-collapse">
+                        <thead className="bg-gray-100 text-gray-900 uppercase text-xs font-bold border-b-2 border-gray-300">
+                          <tr><th className="px-4 py-3 border border-gray-200">Tipo de Serviço</th><th className="px-4 py-3 border border-gray-200 text-center">Ocorrências</th><th className="px-4 py-3 border border-gray-200 text-right">Custo Mão de Obra</th><th className="px-4 py-3 border border-gray-200 text-right">Custo Insumos</th><th className="px-4 py-3 border border-gray-200 text-right">Total</th></tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200 text-gray-800">
+                          {serviceCostAnalysis.map((item, idx) => (
+                            <tr key={idx} className="hover:bg-gray-50"><td className="px-4 py-3 border border-gray-200 font-bold text-gray-900">{item.type}</td><td className="px-4 py-3 border border-gray-200 text-center">{item.count}</td><td className="px-4 py-3 border border-gray-200 text-right">R$ {item.labor.toLocaleString()}</td><td className="px-4 py-3 border border-gray-200 text-right">R$ {item.products.toLocaleString()}</td><td className="px-4 py-3 border border-gray-200 text-right font-bold bg-gray-50">R$ {item.total.toLocaleString()}</td></tr>
+                          ))}
+                          <tr className="bg-gray-100 font-extrabold text-gray-900 border-t-2 border-gray-300"><td className="px-4 py-3 border border-gray-200">TOTAL GERAL</td><td className="px-4 py-3 border border-gray-200 text-center">{serviceCostAnalysis.reduce((acc, i) => acc + i.count, 0)}</td><td className="px-4 py-3 border border-gray-200 text-right">R$ {serviceCostAnalysis.reduce((acc, i) => acc + i.labor, 0).toLocaleString()}</td><td className="px-4 py-3 border border-gray-200 text-right">R$ {serviceCostAnalysis.reduce((acc, i) => acc + i.products, 0).toLocaleString()}</td><td className="px-4 py-3 border border-gray-200 text-right">R$ {serviceCostAnalysis.reduce((acc, i) => acc + i.total, 0).toLocaleString()}</td></tr>
+                        </tbody>
+                      </table>
+                  </div>
+
+                  <div className="break-before-page">
+                    <h4 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2 pt-4">Extrato Detalhado de Atividades</h4>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left border-collapse">
+                        <thead className="bg-gray-100 text-gray-900 uppercase text-xs font-bold border-b-2 border-gray-300">
+                          <tr>
+                            <th className="px-4 py-3 border border-gray-200">Data</th>
+                            <th className="px-4 py-3 border border-gray-200">Talhão</th>
+                            <th className="px-4 py-3 border border-gray-200">Tipo</th>
+                            <th className="px-4 py-3 border border-gray-200">Descrição</th>
+                            <th className="px-4 py-3 border border-gray-200 text-right">Valor Total</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200 text-gray-800">
+                           {activities.filter(a => a.status === 'completed').sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(act => (
+                             <tr key={act.id} className="hover:bg-gray-50">
+                               <td className="px-4 py-2 border border-gray-200 font-medium">{formatDate(act.date)}</td>
+                               <td className="px-4 py-2 border border-gray-200">{plots.find(p=>p.id===act.plotId)?.name}</td>
+                               <td className="px-4 py-2 border border-gray-200"><span className="font-bold text-gray-700">{act.type}</span></td>
+                               <td className="px-4 py-2 border border-gray-200 text-xs text-gray-600 truncate max-w-xs">{act.description}</td>
+                               <td className="px-4 py-2 border border-gray-200 text-right font-bold text-gray-900">R$ {act.totalCost.toLocaleString()}</td>
+                             </tr>
+                           ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 print:hidden flex flex-col md:flex-row md:items-end justify-between gap-4">
+                  <div className="w-full md:w-1/2">
+                      <label className="block text-sm font-bold text-gray-800 mb-2">Selecione o Talhão:</label>
+                      <select className="w-full border border-gray-200 rounded-lg p-3 bg-white text-gray-800" value={selectedReportPlotId} onChange={e => setSelectedReportPlotId(e.target.value)}>
+                        <option value="">Selecione...</option>
+                        {plots.map(p => <option key={p.id} value={p.id}>{p.name} ({p.crop})</option>)}
+                      </select>
+                  </div>
+                  {selectedReportPlotId && <button onClick={() => window.print()} className="flex items-center space-x-2 bg-gray-800 hover:bg-gray-900 text-white px-4 py-2 rounded-lg font-bold transition-colors"><Printer className="w-4 h-4" /><span>Imprimir Relatório</span></button>}
+                </div>
+                {selectedReportPlotId && (
+                   <div className="print:p-4">
+                     <div className="hidden print:block mb-6 border-b border-gray-300 pb-4">
+                       <h2 className="text-2xl font-bold text-gray-900">Relatório: {plots.find(p=>p.id===selectedReportPlotId)?.name}</h2>
+                       <p className="text-gray-600">Data de emissão: {new Date().toLocaleDateString()}</p>
+                     </div>
+                     <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 print:shadow-none print:border-0 print:p-0">
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+                          <div className="h-64"><ResponsiveContainer width="100%" height="100%"><RePieChart><Pie data={financialSummary.plotSummaries.filter(p => p.plotId === selectedReportPlotId).flatMap(p => [{name: 'Receita', value: p.revenue}, {name: 'Custo', value: p.cost}])} cx="50%" cy="50%" outerRadius={80} fill="#8884d8" dataKey="value" label>{[0, 1].map((entry, index) => <Cell key={`cell-${index}`} fill={index === 0 ? '#10b981' : '#f59e0b'} />)}</Pie><Tooltip formatter={(val) => `R$ ${Number(val).toLocaleString()}`} /><Legend /></RePieChart></ResponsiveContainer></div>
+                          <div><h4 className="text-lg font-bold text-gray-800 mb-4">Resumo Financeiro</h4>{financialSummary.plotSummaries.filter(p => p.plotId === selectedReportPlotId).map(p => (<div key={p.plotId} className="space-y-3"><div className="flex justify-between p-3 bg-gray-50 rounded"><span>Receita:</span><span className="font-bold text-green-600">R$ {p.revenue.toLocaleString()}</span></div><div className="flex justify-between p-3 bg-gray-50 rounded"><span>Custo:</span><span className="font-bold text-amber-600">R$ {p.cost.toLocaleString()}</span></div><div className="flex justify-between p-3 bg-gray-50 rounded border-t border-gray-200"><span>Lucro:</span><span className={`font-bold ${p.profit >= 0 ? 'text-blue-600' : 'text-red-600'}`}>R$ {p.profit.toLocaleString()}</span></div></div>))}</div>
+                       </div>
+                       
+                       <h4 className="text-lg font-bold text-gray-800 mb-4 mt-8 border-b pb-2">Resumo por Categoria</h4>
+                        <table className="w-full text-sm text-left border-collapse mb-8">
+                          <thead className="bg-gray-100 text-gray-900 uppercase text-xs font-bold border-b-2 border-gray-300"><tr><th className="px-4 py-3 border border-gray-200">Serviço</th><th className="px-4 py-3 border border-gray-200 text-right">Mão de Obra</th><th className="px-4 py-3 border border-gray-200 text-right">Insumos</th><th className="px-4 py-3 border border-gray-200 text-right">Total</th></tr></thead>
+                          <tbody className="divide-y divide-gray-200 text-gray-800">
+                             {activities.filter(a => a.plotId === selectedReportPlotId && a.status === 'completed').reduce((acc, curr) => {
+                                const existing = acc.find(i => i.type === curr.type);
+                                if (existing) { existing.labor += curr.laborCost; existing.products += (curr.totalCost - curr.laborCost); existing.total += curr.totalCost; } else { acc.push({ type: curr.type, labor: curr.laborCost, products: curr.totalCost - curr.laborCost, total: curr.totalCost }); }
+                                return acc;
+                             }, [] as {type:string, labor:number, products:number, total:number}[]).map((row, idx) => (
+                               <tr key={idx}><td className="px-4 py-3 border border-gray-200 font-bold">{row.type}</td><td className="px-4 py-3 border border-gray-200 text-right">R$ {row.labor.toLocaleString()}</td><td className="px-4 py-3 border border-gray-200 text-right">R$ {row.products.toLocaleString()}</td><td className="px-4 py-3 border border-gray-200 text-right font-bold">R$ {row.total.toLocaleString()}</td></tr>
+                             ))}
+                          </tbody>
+                        </table>
+
+                        <div className="break-before-page">
+                          <h4 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">Extrato Detalhado do Talhão</h4>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm text-left border-collapse">
+                              <thead className="bg-gray-100 text-gray-900 uppercase text-xs font-bold border-b-2 border-gray-300">
+                                <tr>
+                                  <th className="px-4 py-3 border border-gray-200">Data</th>
+                                  <th className="px-4 py-3 border border-gray-200">Tipo</th>
+                                  <th className="px-4 py-3 border border-gray-200">Descrição</th>
+                                  <th className="px-4 py-3 border border-gray-200 text-right">Valor Total</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-200 text-gray-800">
+                                {activities.filter(a => a.plotId === selectedReportPlotId && a.status === 'completed').sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(act => (
+                                  <tr key={act.id} className="hover:bg-gray-50">
+                                    <td className="px-4 py-2 border border-gray-200 font-medium">{formatDate(act.date)}</td>
+                                    <td className="px-4 py-2 border border-gray-200"><span className="font-bold text-gray-700">{act.type}</span></td>
+                                    <td className="px-4 py-2 border border-gray-200 text-xs text-gray-600 truncate max-w-xs">{act.description}</td>
+                                    <td className="px-4 py-2 border border-gray-200 text-right font-bold text-gray-900">R$ {act.totalCost.toLocaleString()}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                     </div>
+                   </div>
+                )}
+                </>
+              )}
+            </div>
         )}
 
         {/* Harvests Tab */}
