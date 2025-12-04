@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   LayoutDashboard, Trees, DollarSign, ClipboardList, Package, Plus, Trash2, 
   BrainCircuit, TrendingUp, Leaf, Calendar, Clock, PieChart, Menu, X, Save, 
@@ -29,16 +29,15 @@ const CHART_COLORS = ['#2563eb', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#e
 // --- Helper: Date Formatting ---
 const formatDate = (dateString: string) => {
   if (!dateString) return '-';
-  // Evita problemas de timezone criando a data como UTC e pegando partes
   const [year, month, day] = dateString.split('-');
   return `${day}/${month}/${year}`;
 };
 
-// --- Initial Mock Data ---
+// --- Initial Mock Data (Usado se o banco estiver vazio) ---
 const INITIAL_PLOTS: Plot[] = [
-  { id: '1', name: 'Talhão 01 - Manga Palmer', crop: 'Manga', area: 5.0 },
-  { id: '2', name: 'Talhão 02 - Goiaba Tailandesa', crop: 'Goiaba', area: 3.5 },
-  { id: '3', name: 'Talhão 03 - Manga Tommy', crop: 'Manga', area: 4.0 },
+  { id: '1', name: 'Talhão 01 - Manga Palmer', crop: 'Manga', area: 5.0, unit: 'ha' },
+  { id: '2', name: 'Talhão 02 - Goiaba Tailandesa', crop: 'Goiaba', area: 3.5, unit: 'ha' },
+  { id: '3', name: 'Talhão 03 - Manga Tommy', crop: 'Manga', area: 4.0, unit: 'ha' },
 ];
 
 const INITIAL_PRODUCTS: Product[] = [
@@ -69,7 +68,7 @@ const INITIAL_ACTIVITIES: Activity[] = [
     description: 'Adubação de produção', 
     laborCost: 300, 
     productsUsed: [{ productId: '1', quantity: 15 }], 
-    totalCost: 3000 // 300 + (15 * 180)
+    totalCost: 3000 
   },
   { 
     id: '3', 
@@ -80,7 +79,7 @@ const INITIAL_ACTIVITIES: Activity[] = [
     description: 'Aplicação preventiva para Oídio (Planejado)', 
     laborCost: 200, 
     productsUsed: [{ productId: '2', quantity: 5 }], 
-    totalCost: 675 // 200 + (5 * 95)
+    totalCost: 675 
   },
 ];
 
@@ -109,14 +108,8 @@ const INITIAL_HARVESTS: Harvest[] = [
   },
 ];
 
-// --- CLEAN APP CODE FOR EXPORT ---
-// Updated with Filters (Date Range & Plot) for Reports and Activities
-const CLEAN_APP_CODE = `import React, { useState, useEffect, useMemo } from 'react';
-// ... (Código de backup mantido para a função de download) ...
-`;
-
 export default function App() {
-  // --- INICIALIZAÇÃO SEGURA DO SUPABASE ---
+  // --- 1. INICIALIZAÇÃO SEGURA DO SUPABASE ---
   const supabase = useMemo(() => {
     const url = import.meta.env.VITE_SUPABASE_URL;
     const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -138,6 +131,8 @@ export default function App() {
   const [reportStartDate, setReportStartDate] = useState('');
   const [reportEndDate, setReportEndDate] = useState('');
   const [reportConsolidatedPlotId, setReportConsolidatedPlotId] = useState('');
+  
+  const [harvestFilterPlotId, setHarvestFilterPlotId] = useState('');
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; type: 'plot' | 'product' | 'activity' | 'harvest' | null; id: string | null; }>({ isOpen: false, type: null, id: null });
@@ -146,18 +141,17 @@ export default function App() {
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [calendarPlotId, setCalendarPlotId] = useState('');
 
-  // --- Data State (Inicializado Vazio ou com Mock, carregado via Supabase) ---
-  // Removido o localStorage.getItem, agora usa as constantes iniciais
+  // --- Data State (Inicializado via Supabase ou Mock) ---
   const [plots, setPlots] = useState<Plot[]>(INITIAL_PLOTS);
   const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
   const [activities, setActivities] = useState<Activity[]>(INITIAL_ACTIVITIES);
   const [harvests, setHarvests] = useState<Harvest[]>(INITIAL_HARVESTS);
 
+  // Dynamic Lists State
   const [availableActivityTypes, setAvailableActivityTypes] = useState<string[]>(Object.values(ActivityType));
   const [availableCategories, setAvailableCategories] = useState<string[]>(['Fertilizante', 'Defensivo', 'Adubo', 'Outros']);
 
-  // --- SUPABASE: LEITURA DE DADOS ---
-  // Substitui os useEffects de localStorage.setItem
+  // --- 2. SUPABASE: LEITURA DE DADOS ---
   useEffect(() => {
     const loadData = async () => {
       if (!supabase) return; // Evita erro se não configurado
@@ -179,71 +173,111 @@ export default function App() {
   const [showPlotForm, setShowPlotForm] = useState(false);
   const [newPlot, setNewPlot] = useState<Partial<Plot>>({ crop: 'Manga' });
   const [showProductForm, setShowProductForm] = useState(false);
-  const [newProduct, setNewProduct] = useState<Partial<Product>>({ category: 'Outros', unit: 'un' as UnitType });
+  const [newProduct, setNewProduct] = useState<Partial<Product>>({ category: 'Outros', unit: UnitType.UNIDADE });
   const [isCustomCategoryInput, setIsCustomCategoryInput] = useState(false);
 
   const [showActivityForm, setShowActivityForm] = useState(false);
   
-  // Date Fix: Helper to get local date string YYYY-MM-DD
+  // Date Fix
   const getTodayLocal = () => {
     const d = new Date();
     return new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
   };
-  
-  const [newActivity, setNewActivity] = useState<{ plotId: string; type: string; status: 'completed' | 'planned'; date: string; description: string; laborCost: number; selectedProduct: string; selectedQuantity: number; addedProducts: { productId: string; quantity: number; cost: number }[]; }>({ plotId: '', type: ActivityType.OUTROS, status: 'completed', date: getTodayLocal(), description: '', laborCost: 0, selectedProduct: '', selectedQuantity: 0, addedProducts: [] });
-  const [isCustomActivityTypeInput, setIsCustomActivityTypeInput] = useState(false);
-  const [showHarvestForm, setShowHarvestForm] = useState(false);
-  const [newHarvest, setNewHarvest] = useState<Partial<Harvest>>({ date: getTodayLocal(), unit: 'kg' as UnitType, unitPrice: 0, quantity: 0 });
 
+  const [newActivity, setNewActivity] = useState<{
+    plotId: string;
+    type: string;
+    status: 'completed' | 'planned';
+    date: string;
+    description: string;
+    laborCost: number;
+    selectedProduct: string;
+    selectedQuantity: number;
+    addedProducts: { productId: string; quantity: number; cost: number }[];
+  }>({
+    plotId: '',
+    type: ActivityType.OUTROS,
+    status: 'completed',
+    date: getTodayLocal(),
+    description: '',
+    laborCost: 0,
+    selectedProduct: '',
+    selectedQuantity: 0,
+    addedProducts: []
+  });
+  const [isCustomActivityTypeInput, setIsCustomActivityTypeInput] = useState(false);
+
+  const [showHarvestForm, setShowHarvestForm] = useState(false);
+  const [newHarvest, setNewHarvest] = useState<Partial<Harvest>>({ 
+    date: getTodayLocal(),
+    unit: UnitType.KG,
+    unitPrice: 0,
+    quantity: 0
+  });
+
+  // Analysis State
   const [aiReport, setAiReport] = useState<string>("");
   const [loadingAi, setLoadingAi] = useState(false);
 
-  // ... Helpers ...
-  const changeMonth = (offset: number) => { setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() + offset, 1)); };
-  const getMonthName = (date: Date) => { const name = date.toLocaleString('pt-BR', { month: 'long', year: 'numeric' }); return name.charAt(0).toUpperCase() + name.slice(1); };
-  
-  const timelineData = useMemo(() => {
-    const year = calendarDate.getFullYear();
-    const month = calendarDate.getMonth();
-    const filtered = activities.filter(a => {
-      const [aYear, aMonth] = a.date.split('-').map(Number);
-      const inMonth = (aYear === year && (aMonth - 1) === month);
-      if (!inMonth) return false;
-      if (calendarPlotId && a.plotId !== calendarPlotId) return false;
-      return true;
-    });
-    const grouped: Record<string, Activity[]> = {};
-    filtered.forEach(a => { if (!grouped[a.date]) grouped[a.date] = []; grouped[a.date].push(a); });
-    return Object.keys(grouped).sort().map(date => ({ date, items: grouped[date] }));
-  }, [activities, calendarDate, calendarPlotId]);
-
+  // --- Calculations ---
   const financialSummary: FinancialSummary = useMemo(() => {
-    let totalRevenue = 0; let totalCost = 0;
+    let totalRevenue = 0;
+    let totalCost = 0;
     const plotSummariesMap = new Map<string, { cost: number; revenue: number }>();
+
     plots.forEach(p => plotSummariesMap.set(p.id, { cost: 0, revenue: 0 }));
+
     activities.filter(a => a.status === 'completed').forEach(act => {
       totalCost += act.totalCost;
       const current = plotSummariesMap.get(act.plotId) || { cost: 0, revenue: 0 };
       plotSummariesMap.set(act.plotId, { ...current, cost: current.cost + act.totalCost });
     });
+
     harvests.forEach(har => {
       totalRevenue += har.totalRevenue;
       const current = plotSummariesMap.get(har.plotId) || { cost: 0, revenue: 0 };
       plotSummariesMap.set(har.plotId, { ...current, revenue: current.revenue + har.totalRevenue });
     });
+
     const plotSummaries = Array.from(plotSummariesMap.entries()).map(([plotId, data]) => {
       const plot = plots.find(p => p.id === plotId);
-      return { plotId, plotName: plot ? plot.name : 'Desconhecido', cost: data.cost, revenue: data.revenue, profit: data.revenue - data.cost };
+      return {
+        plotId,
+        plotName: plot ? plot.name : 'Desconhecido',
+        cost: data.cost,
+        revenue: data.revenue,
+        profit: data.revenue - data.cost
+      };
     });
+
     return { totalRevenue, totalCost, netProfit: totalRevenue - totalCost, plotSummaries };
   }, [plots, activities, harvests]);
 
-  // Updated Analysis with Filters
+  // Harvest Stats Calculation
+  const harvestStats = useMemo(() => {
+    const filtered = harvests.filter(h => !harvestFilterPlotId || h.plotId === harvestFilterPlotId);
+    const totalVolume = filtered.reduce((acc, h) => acc + h.quantity, 0);
+    const totalRevenue = filtered.reduce((acc, h) => acc + h.totalRevenue, 0);
+    
+    const classificationStats: Record<string, number> = {};
+    filtered.forEach(h => {
+       classificationStats[h.classification] = (classificationStats[h.classification] || 0) + h.quantity;
+    });
+    
+    const chartData = Object.entries(classificationStats).map(([name, value]) => ({
+       name,
+       value
+    }));
+
+    return { totalVolume, totalRevenue, chartData };
+  }, [harvests, harvestFilterPlotId]);
+
   const serviceCostAnalysis = useMemo(() => {
     const summary: Record<string, { count: number, labor: number, products: number, total: number }> = {};
     activities.forEach(act => {
       if (act.status !== 'completed') return;
-      // Filters
+      
+      // APPLY FILTERS
       if (reportStartDate && act.date < reportStartDate) return;
       if (reportEndDate && act.date > reportEndDate) return;
       if (reportConsolidatedPlotId && act.plotId !== reportConsolidatedPlotId) return;
@@ -257,6 +291,39 @@ export default function App() {
     });
     return Object.entries(summary).map(([type, data]) => ({ type, ...data })).sort((a, b) => b.total - a.total);
   }, [activities, reportStartDate, reportEndDate, reportConsolidatedPlotId]);
+
+  // --- Calendar Helpers ---
+  const changeMonth = (offset: number) => {
+    setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() + offset, 1));
+  };
+  const getMonthName = (date: Date) => {
+    const name = date.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  };
+  
+  const timelineData = useMemo(() => {
+    const year = calendarDate.getFullYear();
+    const month = calendarDate.getMonth();
+    const filtered = activities.filter(a => {
+      const [aYear, aMonth] = a.date.split('-').map(Number);
+      const inMonth = (aYear === year && (aMonth - 1) === month);
+      
+      if (!inMonth) return false;
+      if (calendarPlotId && a.plotId !== calendarPlotId) return false;
+      return true;
+    });
+
+    const grouped: Record<string, Activity[]> = {};
+    filtered.forEach(a => {
+      if (!grouped[a.date]) grouped[a.date] = [];
+      grouped[a.date].push(a);
+    });
+
+    return Object.keys(grouped).sort().map(date => ({
+      date,
+      items: grouped[date]
+    }));
+  }, [activities, calendarDate, calendarPlotId]);
 
   // --- Handlers ---
   const getClassificationOptions = (plotId: string): string[] => {
@@ -273,45 +340,39 @@ export default function App() {
     setIsMobileMenuOpen(false);
   };
 
+  // --- 3. SUPABASE: ESCRITA DE DADOS ---
+  const handleManualSave = async () => {
+    if (!supabase) {
+        alert("Erro: Cliente Supabase não inicializado. Verifique as chaves VITE_ na Vercel.");
+        return;
+    }
+    const dataToSave = { 
+        plots, 
+        products, 
+        activities, 
+        harvests, 
+        activityTypes: availableActivityTypes, 
+        categories: availableCategories 
+    };
+
+    const success = await saveData(dataToSave as any); // Chama o serviço
+    
+    if (success) {
+        setShowSaveNotification(true);
+        setTimeout(() => setShowSaveNotification(false), 3000);
+    } else {
+        alert("Erro ao salvar! Verifique se você desativou o RLS no Supabase.");
+    }
+  };
+
   const downloadProject = async () => {
     const zip = new JSZip();
-    zip.file("package.json", JSON.stringify({
-      "name": "fazenda-cassianos",
-      "private": true,
-      "version": "1.0.0",
-      "type": "module",
-      "scripts": { "dev": "vite", "build": "vite build", "preview": "vite preview" },
-      "dependencies": { "react": "^18.3.1", "react-dom": "^18.3.1", "lucide-react": "^0.344.0", "recharts": "^2.12.2", "@google/genai": "^0.1.1" },
-      "devDependencies": { "@types/react": "^18.3.3", "@types/react-dom": "^18.3.0", "@vitejs/plugin-react": "^4.2.1", "typescript": "^5.2.2", "vite": "^5.2.0", "autoprefixer": "^10.4.19", "postcss": "^8.4.38", "tailwindcss": "^3.4.3" }
-    }, null, 2));
-
-    zip.file("vite.config.ts", `import { defineConfig, loadEnv } from 'vite';
-import react from '@vitejs/plugin-react';
-export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, '.', '');
-  return {
-    plugins: [react()],
-    define: { 'process.env.API_KEY': JSON.stringify(env.API_KEY) }
-  };
-});`);
-
-    zip.file("tsconfig.json", `{ "compilerOptions": { "target": "ES2020", "useDefineForClassFields": true, "lib": ["ES2020", "DOM", "DOM.Iterable"], "module": "ESNext", "skipLibCheck": true, "moduleResolution": "bundler", "allowImportingTsExtensions": true, "resolveJsonModule": true, "isolatedModules": true, "noEmit": true, "jsx": "react-jsx", "strict": true, "noUnusedLocals": false, "noUnusedParameters": false, "noFallthroughCasesInSwitch": true }, "include": ["src"], "references": [{ "path": "./tsconfig.node.json" }] }`);
-    zip.file("tsconfig.node.json", `{ "compilerOptions": { "composite": true, "skipLibCheck": true, "module": "ESNext", "moduleResolution": "bundler", "allowSyntheticDefaultImports": true }, "include": ["vite.config.ts"] }`);
-    zip.file("index.html", `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Fazenda Cassiano's</title><script src="https://cdn.tailwindcss.com"></script><script>tailwind.config={theme:{extend:{colors:{agri:{50:'#eff6ff',100:'#dbeafe',200:'#bfdbfe',300:'#93c5fd',400:'#60a5fa',500:'#3b82f6',600:'#2563eb',700:'#1d4ed8',800:'#1e40af',900:'#1e3a8a'}}}}}</script></head><body class="bg-gray-50 text-gray-900"><div id="root"></div><script type="module" src="/src/index.tsx"></script></body></html>`);
-
-    const src = zip.folder("src");
-    const services = src?.folder("services");
-    services?.file("geminiService.ts", `import { GoogleGenAI } from "@google/genai"; const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' }); export const generateAgriInsights = async (summary: any, activities: any, harvests: any, plots: any) => { return "<p>Simulação de IA.</p>"; };`);
-    
-    const components = src?.folder("components");
-    components?.file("SummaryCard.tsx", `import React from 'react'; export const SummaryCard = ({ title, value, icon: Icon, colorClass = "bg-white" }: any) => (<div className={\`\${colorClass} rounded-xl shadow-sm p-6 border border-gray-200 flex items-start justify-between\`}><div><p className="text-sm font-bold text-gray-700 mb-1">{title}</p><h3 className="text-2xl font-extrabold text-gray-900">{value}</h3></div><div className="p-3 bg-white/60 rounded-lg border border-gray-200"><Icon className="w-6 h-6 text-agri-800" /></div></div>);`);
-
-    src?.file("App.tsx", CLEAN_APP_CODE);
+    zip.file("README.md", "Projeto Fazenda Cassiano's. Dados no Supabase.");
     const content = await zip.generateAsync({ type: "blob" });
     const url = window.URL.createObjectURL(content);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "fazenda-cassianos-blue-v2.zip";
+    a.download = "fazenda-cassianos-backup.zip";
     a.click();
     window.URL.revokeObjectURL(url);
   };
@@ -395,31 +456,6 @@ export default defineConfig(({ mode }) => {
     setNewHarvest(harvest);
     setEditingId(harvest.id);
     setShowHarvestForm(true);
-  };
-
-  // --- SUPABASE: ESCRITA DE DADOS (Substitui handleManualSave antigo) ---
-  const handleManualSave = async () => {
-    if (!supabase) {
-        alert("Erro: Cliente Supabase não inicializado. Verifique as chaves VITE_ na Vercel.");
-        return;
-    }
-    const dataToSave = { 
-        plots, 
-        products, 
-        activities, 
-        harvests, 
-        activityTypes: availableActivityTypes, 
-        categories: availableCategories 
-    };
-
-    const success = await saveData(dataToSave as any);
-    
-    if (success) {
-        setShowSaveNotification(true);
-        setTimeout(() => setShowSaveNotification(false), 3000);
-    } else {
-        alert("Erro ao salvar! Verifique se você desativou o RLS no Supabase.");
-    }
   };
 
   const handleSavePlot = () => {
@@ -652,6 +688,7 @@ export default defineConfig(({ mode }) => {
           </div>
         </header>
 
+        {/* Dashboard Content */}
         {activeTab === 'dashboard' && (
            <div className="space-y-6 animate-fade-in">
              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -865,11 +902,11 @@ export default defineConfig(({ mode }) => {
                  <div className="flex flex-col md:flex-row gap-4 items-end">
                     <div className="w-full md:w-1/3">
                        <label className="block text-xs font-semibold text-gray-500 mb-1">Data Início</label>
-                       <input type="date" className="w-full border border-gray-300 rounded-lg p-2 text-sm text-gray-900" value={reportStartDate} onChange={e => setReportStartDate(e.target.value)} />
+                       <input type="date" className="w-full border border-gray-300 rounded-lg p-2 text-sm text-gray-900 bg-white shadow-none" value={reportStartDate} onChange={e => setReportStartDate(e.target.value)} />
                     </div>
                     <div className="w-full md:w-1/3">
                        <label className="block text-xs font-semibold text-gray-500 mb-1">Data Fim</label>
-                       <input type="date" className="w-full border border-gray-300 rounded-lg p-2 text-sm text-gray-900" value={reportEndDate} onChange={e => setReportEndDate(e.target.value)} />
+                       <input type="date" className="w-full border border-gray-300 rounded-lg p-2 text-sm text-gray-900 bg-white shadow-none" value={reportEndDate} onChange={e => setReportEndDate(e.target.value)} />
                     </div>
                     <div className="w-full md:w-1/3 flex items-end">
                        {(reportStartDate || reportEndDate) && (
@@ -1035,145 +1072,80 @@ export default defineConfig(({ mode }) => {
             </div>
         )}
 
-        {/* Plots Tab */}
-        {activeTab === 'plots' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {plots.map(plot => (
-               <div key={plot.id} className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm relative group">
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="p-3 bg-blue-50 rounded-lg text-blue-700 border border-blue-100"><Trees className="w-6 h-6" /></div>
-                    <span className={`text-xs font-bold px-3 py-1 rounded-full ${plot.crop === 'Manga' ? 'bg-amber-100 text-amber-900' : 'bg-red-100 text-red-900'}`}>{plot.crop}</span>
-                  </div>
-                  <h3 className="text-lg font-bold text-gray-900 mb-1">{plot.name}</h3>
-                  <p className="text-gray-700 font-medium mb-4">{plot.area} Hectares</p>
-                  <div className="flex justify-end space-x-1 mt-4 border-t border-gray-100 pt-3">
-                    <button type="button" onClick={(e) => handleEditPlot(e, plot)} className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg border border-gray-100 flex items-center gap-1 text-xs font-bold"><Pencil className="w-4 h-4" /> Editar</button>
-                    <button type="button" onClick={(e) => openDeleteModal(e, 'plot', plot.id)} className="p-2 text-red-600 hover:bg-red-100 rounded-lg border border-gray-100 flex items-center gap-1 text-xs font-bold"><Trash2 className="w-4 h-4" /> Excluir</button>
-                  </div>
-               </div>
-            ))}
-          </div>
-        )}
-
-        {/* Inventory Tab */}
-        {activeTab === 'inventory' && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left">
-                <thead className="bg-gray-100 text-gray-900 uppercase text-xs font-bold border-b border-gray-200">
-                    <tr><th className="px-6 py-4">Produto</th><th className="px-6 py-4">Categoria</th><th className="px-6 py-4">Preço de Custo</th><th className="px-6 py-4 text-right">Ação</th></tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200 text-gray-800">
-                    {products.map(product => (
-                    <tr key={product.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 font-bold text-gray-900">{product.name}</td>
-                        <td className="px-6 py-4"><span className={`px-2 py-1 rounded-full text-xs font-bold ${product.category === 'Fertilizante' ? 'bg-amber-100 text-amber-800' : product.category === 'Defensivo' ? 'bg-red-100 text-red-800' : product.category === 'Adubo' ? 'bg-lime-100 text-lime-800' : 'bg-gray-200 text-gray-800'}`}>{product.category}</span></td>
-                        <td className="px-6 py-4 font-medium">R$ {product.pricePerUnit.toFixed(2)} / {product.unit}</td>
-                        <td className="px-6 py-4 text-right flex justify-end space-x-2">
-                           <button type="button" onClick={(e) => handleEditProduct(e, product)} className="text-blue-600 hover:text-blue-800 p-2 rounded hover:bg-blue-50 cursor-pointer"><Pencil className="w-5 h-5 pointer-events-none" /></button>
-                           <button type="button" onClick={(e) => openDeleteModal(e, 'product', product.id)} className="text-red-600 hover:text-red-800 p-2 rounded hover:bg-red-50 cursor-pointer"><Trash2 className="w-5 h-5 pointer-events-none" /></button>
-                        </td>
-                    </tr>
-                    ))}
-                </tbody>
-                </table>
-            </div>
-          </div>
-        )}
-
-        {/* Activities Tab (Revised Layout) */}
-        {activeTab === 'activities' && (
-          <div className="space-y-6">
-            <div className="flex flex-col md:flex-row gap-4 items-center justify-between bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
-                <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg border border-gray-200 w-fit">
-                  <button onClick={() => setActivityView('history')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${activityView === 'history' ? 'bg-white text-blue-900 shadow-sm' : 'text-gray-600 hover:bg-gray-200'}`}>Histórico (Realizadas)</button>
-                  <button onClick={() => setActivityView('planning')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${activityView === 'planning' ? 'bg-white text-purple-900 shadow-sm' : 'text-gray-600 hover:bg-gray-200'}`}>Planejamento (Futuro)</button>
-                </div>
-                <div className="w-full md:w-64">
-                   <select className="w-full border border-gray-200 rounded-lg p-2.5 bg-gray-50 text-gray-900 font-medium text-sm" value={activityFilterPlotId} onChange={e => setActivityFilterPlotId(e.target.value)}>
-                      <option value="">Todos os Talhões</option>
-                      {plots.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                   </select>
-                </div>
-            </div>
-
-            {activities.filter(a => {
-               if (a.status !== (activityView === 'history' ? 'completed' : 'planned')) return false;
-               if (activityFilterPlotId && a.plotId !== activityFilterPlotId) return false;
-               return true;
-            }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).length === 0 ? (
-                <div className="text-center py-12 text-gray-400 bg-white rounded-xl border border-gray-200">
-                    <p>Nenhuma atividade encontrada com estes filtros.</p>
-                </div>
-            ) : (
-                activities.filter(a => {
-                    if (a.status !== (activityView === 'history' ? 'completed' : 'planned')) return false;
-                    if (activityFilterPlotId && a.plotId !== activityFilterPlotId) return false;
-                    return true;
-                }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(activity => (
-                <div key={activity.id} className={`rounded-xl shadow-sm border p-6 group ${activity.status === 'planned' ? 'bg-purple-50/50 border-purple-200' : 'bg-white border-gray-200'}`}>
-                    <div className="flex flex-col md:flex-row justify-between items-start mb-4 gap-4">
-                    <div className="flex-1">
-                        <div className="flex items-center space-x-2 mb-1">
-                            <h3 className="font-extrabold text-gray-900 text-lg">{activity.type}</h3>
-                            {activity.status === 'planned' && <span className="bg-purple-200 text-purple-900 text-xs px-2 py-0.5 rounded-full font-bold">Agendada</span>}
-                        </div>
-                        <div className="flex items-center text-sm text-gray-700 space-x-3 font-medium">
-                            <span className="text-blue-800">{plots.find(p => p.id === activity.plotId)?.name}</span> 
-                            <span className="text-gray-400">•</span> 
-                            <span>{formatDate(activity.date)}</span>
-                        </div>
-                    </div>
-                    <div className="flex items-center space-x-1 bg-gray-50 p-1 rounded-lg border border-gray-200 self-start md:self-auto">
-                        <button title="Duplicar" type="button" onClick={(e) => handleDuplicateActivity(e, activity)} className="p-2 text-emerald-600 hover:bg-emerald-100 rounded-md transition-colors">
-                        <Copy className="w-4 h-4" />
-                        </button>
-                        <div className="w-px h-4 bg-gray-300 mx-1"></div>
-                        <button title="Editar" type="button" onClick={(e) => handleEditActivity(e, activity)} className="p-2 text-blue-600 hover:bg-blue-100 rounded-md transition-colors">
-                        <Pencil className="w-4 h-4" />
-                        </button>
-                        <button title="Excluir" type="button" onClick={(e) => openDeleteModal(e, 'activity', activity.id)} className="p-2 text-red-600 hover:bg-red-100 rounded-md transition-colors">
-                        <Trash2 className="w-4 h-4" />
-                        </button>
-                    </div>
-                    </div>
-                    <div className="flex flex-col md:flex-row justify-between items-end border-t border-gray-100 pt-4 mt-2">
-                    <p className="text-gray-800 text-sm italic bg-gray-50/50 p-2 rounded w-full md:w-2/3">"{activity.description}"</p>
-                    <div className="text-right mt-3 md:mt-0 min-w-max ml-4">
-                        <span className={`block text-xl font-extrabold ${activity.status === 'planned' ? 'text-purple-700' : 'text-gray-900'}`}>R$ {activity.totalCost.toLocaleString()}</span>
-                        <span className="text-xs text-gray-600 font-medium">{activity.status === 'planned' ? 'Custo Estimado' : 'Custo Total'}</span>
-                    </div>
-                    </div>
-                </div>
-                ))
-            )}
-          </div>
-        )}
-
-        {/* Harvests Tab */}
+        {/* Harvests Tab (Updated with Filters and Chart) */}
         {activeTab === 'harvests' && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-             <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left">
-                <thead className="bg-gray-100 text-gray-900 uppercase text-xs font-bold border-b border-gray-200">
-                    <tr><th className="px-6 py-4">Data</th><th className="px-6 py-4">Talhão</th><th className="px-6 py-4">Classificação</th><th className="px-6 py-4">Qtd / Preço</th><th className="px-6 py-4 text-right">Total</th><th className="px-6 py-4 text-right">Ação</th></tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200 text-gray-800">
-                    {harvests.map(h => (
-                    <tr key={h.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 text-gray-700 font-medium">{formatDate(h.date)}</td>
-                        <td className="px-6 py-4"><div className="font-bold text-gray-900">{plots.find(p => p.id === h.plotId)?.name}</div></td>
-                        <td className="px-6 py-4"><span className="px-2 py-1 bg-gray-200 rounded-md text-xs font-bold text-gray-800 border border-gray-200">{h.classification}</span></td>
-                        <td className="px-6 py-4"><div className="text-gray-900 font-bold">{h.quantity} {h.unit}</div><div className="text-xs text-gray-600 font-medium">a R$ {h.unitPrice.toFixed(2)}</div></td>
-                        <td className="px-6 py-4 text-right font-extrabold text-blue-700">R$ {h.totalRevenue.toLocaleString()}</td>
-                        <td className="px-6 py-4 text-right flex justify-end space-x-2">
-                           <button type="button" onClick={(e) => handleEditHarvest(e, h)} className="text-blue-600 hover:text-blue-800 p-2 rounded hover:bg-blue-50 cursor-pointer"><Pencil className="w-5 h-5 pointer-events-none" /></button>
-                           <button type="button" onClick={(e) => openDeleteModal(e, 'harvest', h.id)} className="text-red-600 hover:text-red-800 p-2 rounded hover:bg-red-50 cursor-pointer"><Trash2 className="w-5 h-5 pointer-events-none" /></button>
-                        </td>
-                    </tr>
-                    ))}
-                </tbody>
-                </table>
+          <div className="space-y-6">
+             {/* Harvest Header with Filters and Stats */}
+             <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                 <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4 border-b border-gray-100 pb-4">
+                    <h3 className="text-lg font-bold text-gray-900">Análise de Colheita e Vendas</h3>
+                    <div className="w-full md:w-64">
+                       <select className="w-full border border-gray-200 rounded-lg p-2.5 bg-gray-50 text-gray-900 font-medium text-sm" value={harvestFilterPlotId} onChange={e => setHarvestFilterPlotId(e.target.value)}>
+                          <option value="">Geral (Todos os Talhões)</option>
+                          {plots.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                       </select>
+                    </div>
+                 </div>
+                 
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                     {/* Stats Cards */}
+                     <div className="grid grid-cols-1 gap-4">
+                        <div className="p-4 bg-green-50 rounded-lg border border-green-100">
+                           <p className="text-sm font-bold text-green-800">Receita Total do Período</p>
+                           <p className="text-2xl font-extrabold text-green-900 mt-1">R$ {harvestStats.totalRevenue.toLocaleString()}</p>
+                        </div>
+                        <div className="p-4 bg-blue-50 rounded-lg border border-blue-100">
+                           <p className="text-sm font-bold text-blue-800">Volume Total Colhido (Soma Unidades)</p>
+                           <p className="text-2xl font-extrabold text-blue-900 mt-1">{harvestStats.totalVolume.toLocaleString()}</p>
+                        </div>
+                     </div>
+                     
+                     {/* Pie Chart */}
+                     <div className="h-64 relative">
+                        <h4 className="text-xs font-bold text-gray-500 uppercase mb-2 text-center absolute w-full -top-2">Distribuição por Classificação (%)</h4>
+                        <ResponsiveContainer width="100%" height="100%">
+                           <RePieChart>
+                              <Pie data={harvestStats.chartData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                                 {harvestStats.chartData.map((entry, index) => (
+                                    <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                                 ))}
+                              </Pie>
+                              <Tooltip formatter={(value: number) => [value, 'Quantidade']} />
+                              <Legend />
+                           </RePieChart>
+                        </ResponsiveContainer>
+                     </div>
+                 </div>
+             </div>
+
+             {/* Harvest List */}
+             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                 <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left">
+                    <thead className="bg-gray-100 text-gray-900 uppercase text-xs font-bold border-b border-gray-200">
+                        <tr><th className="px-6 py-4">Data</th><th className="px-6 py-4">Talhão</th><th className="px-6 py-4">Classificação</th><th className="px-6 py-4">Qtd / Preço</th><th className="px-6 py-4 text-right">Total</th><th className="px-6 py-4 text-right">Ação</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200 text-gray-800">
+                        {harvests.filter(h => !harvestFilterPlotId || h.plotId === harvestFilterPlotId).length === 0 ? (
+                           <tr><td colSpan={6} className="text-center py-8 text-gray-500 font-medium">Nenhuma colheita registrada para este filtro.</td></tr>
+                        ) : (
+                           harvests.filter(h => !harvestFilterPlotId || h.plotId === harvestFilterPlotId).map(h => (
+                           <tr key={h.id} className="hover:bg-gray-50">
+                              <td className="px-6 py-4 text-gray-700 font-medium">{formatDate(h.date)}</td>
+                              <td className="px-6 py-4"><div className="font-bold text-gray-900">{plots.find(p => p.id === h.plotId)?.name}</div></td>
+                              <td className="px-6 py-4"><span className="px-2 py-1 bg-gray-200 rounded-md text-xs font-bold text-gray-800 border border-gray-200">{h.classification}</span></td>
+                              <td className="px-6 py-4"><div className="text-gray-900 font-bold">{h.quantity} {h.unit}</div><div className="text-xs text-gray-600 font-medium">a R$ {h.unitPrice.toFixed(2)}</div></td>
+                              <td className="px-6 py-4 text-right font-extrabold text-blue-700">R$ {h.totalRevenue.toLocaleString()}</td>
+                              <td className="px-6 py-4 text-right flex justify-end space-x-2">
+                                 <button type="button" onClick={(e) => handleEditHarvest(e, h)} className="text-blue-600 hover:text-blue-800 p-2 rounded hover:bg-blue-50 cursor-pointer"><Pencil className="w-5 h-5 pointer-events-none" /></button>
+                                 <button type="button" onClick={(e) => openDeleteModal(e, 'harvest', h.id)} className="text-red-600 hover:text-red-800 p-2 rounded hover:bg-red-50 cursor-pointer"><Trash2 className="w-5 h-5 pointer-events-none" /></button>
+                              </td>
+                           </tr>
+                           ))
+                        )}
+                    </tbody>
+                    </table>
+                 </div>
              </div>
           </div>
         )}
