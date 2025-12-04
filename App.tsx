@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   LayoutDashboard, Trees, DollarSign, ClipboardList, Package, Plus, Trash2, 
   BrainCircuit, TrendingUp, Leaf, Calendar, Clock, PieChart, Menu, X, Save, 
@@ -29,6 +29,7 @@ const CHART_COLORS = ['#2563eb', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#e
 // --- Helper: Date Formatting ---
 const formatDate = (dateString: string) => {
   if (!dateString) return '-';
+  // Evita problemas de timezone criando a data como UTC e pegando partes
   const [year, month, day] = dateString.split('-');
   return `${day}/${month}/${year}`;
 };
@@ -133,6 +134,8 @@ export default function App() {
   const [reportConsolidatedPlotId, setReportConsolidatedPlotId] = useState('');
   
   const [harvestFilterPlotId, setHarvestFilterPlotId] = useState('');
+  const [harvestStartDate, setHarvestStartDate] = useState('');
+  const [harvestEndDate, setHarvestEndDate] = useState('');
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; type: 'plot' | 'product' | 'activity' | 'harvest' | null; id: string | null; }>({ isOpen: false, type: null, id: null });
@@ -141,7 +144,7 @@ export default function App() {
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [calendarPlotId, setCalendarPlotId] = useState('');
 
-  // --- Data State (Inicializado via Supabase ou Mock) ---
+  // --- Data State (Inicializado Vazio ou com Mock, carregado via Supabase) ---
   const [plots, setPlots] = useState<Plot[]>(INITIAL_PLOTS);
   const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
   const [activities, setActivities] = useState<Activity[]>(INITIAL_ACTIVITIES);
@@ -172,18 +175,19 @@ export default function App() {
   // Forms State
   const [showPlotForm, setShowPlotForm] = useState(false);
   const [newPlot, setNewPlot] = useState<Partial<Plot>>({ crop: 'Manga' });
+
   const [showProductForm, setShowProductForm] = useState(false);
-  const [newProduct, setNewProduct] = useState<Partial<Product>>({ category: 'Outros', unit: UnitType.UNIDADE });
+  const [newProduct, setNewProduct] = useState<Partial<Product>>({ category: 'Outros', unit: 'un' as UnitType });
   const [isCustomCategoryInput, setIsCustomCategoryInput] = useState(false);
 
   const [showActivityForm, setShowActivityForm] = useState(false);
   
-  // Date Fix
+  // Date Fix: Helper to get local date string YYYY-MM-DD
   const getTodayLocal = () => {
     const d = new Date();
     return new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
   };
-
+  
   const [newActivity, setNewActivity] = useState<{
     plotId: string;
     type: string;
@@ -210,7 +214,7 @@ export default function App() {
   const [showHarvestForm, setShowHarvestForm] = useState(false);
   const [newHarvest, setNewHarvest] = useState<Partial<Harvest>>({ 
     date: getTodayLocal(),
-    unit: UnitType.KG,
+    unit: 'kg' as UnitType,
     unitPrice: 0,
     quantity: 0
   });
@@ -219,10 +223,27 @@ export default function App() {
   const [aiReport, setAiReport] = useState<string>("");
   const [loadingAi, setLoadingAi] = useState(false);
 
-  // --- Calculations ---
+  // ... Helpers ...
+  const changeMonth = (offset: number) => { setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() + offset, 1)); };
+  const getMonthName = (date: Date) => { const name = date.toLocaleString('pt-BR', { month: 'long', year: 'numeric' }); return name.charAt(0).toUpperCase() + name.slice(1); };
+  
+  const timelineData = useMemo(() => {
+    const year = calendarDate.getFullYear();
+    const month = calendarDate.getMonth();
+    const filtered = activities.filter(a => {
+      const [aYear, aMonth] = a.date.split('-').map(Number);
+      const inMonth = (aYear === year && (aMonth - 1) === month);
+      if (!inMonth) return false;
+      if (calendarPlotId && a.plotId !== calendarPlotId) return false;
+      return true;
+    });
+    const grouped: Record<string, Activity[]> = {};
+    filtered.forEach(a => { if (!grouped[a.date]) grouped[a.date] = []; grouped[a.date].push(a); });
+    return Object.keys(grouped).sort().map(date => ({ date, items: grouped[date] }));
+  }, [activities, calendarDate, calendarPlotId]);
+
   const financialSummary: FinancialSummary = useMemo(() => {
-    let totalRevenue = 0;
-    let totalCost = 0;
+    let totalRevenue = 0; let totalCost = 0;
     const plotSummariesMap = new Map<string, { cost: number; revenue: number }>();
 
     plots.forEach(p => plotSummariesMap.set(p.id, { cost: 0, revenue: 0 }));
@@ -253,12 +274,18 @@ export default function App() {
     return { totalRevenue, totalCost, netProfit: totalRevenue - totalCost, plotSummaries };
   }, [plots, activities, harvests]);
 
-  // Harvest Stats Calculation
+  // Harvest Stats Calculation with Date Filters
   const harvestStats = useMemo(() => {
-    const filtered = harvests.filter(h => !harvestFilterPlotId || h.plotId === harvestFilterPlotId);
+    const filtered = harvests.filter(h => {
+        if (harvestFilterPlotId && h.plotId !== harvestFilterPlotId) return false;
+        if (harvestStartDate && h.date < harvestStartDate) return false;
+        if (harvestEndDate && h.date > harvestEndDate) return false;
+        return true;
+    });
     const totalVolume = filtered.reduce((acc, h) => acc + h.quantity, 0);
     const totalRevenue = filtered.reduce((acc, h) => acc + h.totalRevenue, 0);
     
+    // Group by classification
     const classificationStats: Record<string, number> = {};
     filtered.forEach(h => {
        classificationStats[h.classification] = (classificationStats[h.classification] || 0) + h.quantity;
@@ -270,8 +297,9 @@ export default function App() {
     }));
 
     return { totalVolume, totalRevenue, chartData };
-  }, [harvests, harvestFilterPlotId]);
+  }, [harvests, harvestFilterPlotId, harvestStartDate, harvestEndDate]);
 
+  // Updated Analysis with Filters
   const serviceCostAnalysis = useMemo(() => {
     const summary: Record<string, { count: number, labor: number, products: number, total: number }> = {};
     activities.forEach(act => {
@@ -291,39 +319,6 @@ export default function App() {
     });
     return Object.entries(summary).map(([type, data]) => ({ type, ...data })).sort((a, b) => b.total - a.total);
   }, [activities, reportStartDate, reportEndDate, reportConsolidatedPlotId]);
-
-  // --- Calendar Helpers ---
-  const changeMonth = (offset: number) => {
-    setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() + offset, 1));
-  };
-  const getMonthName = (date: Date) => {
-    const name = date.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
-    return name.charAt(0).toUpperCase() + name.slice(1);
-  };
-  
-  const timelineData = useMemo(() => {
-    const year = calendarDate.getFullYear();
-    const month = calendarDate.getMonth();
-    const filtered = activities.filter(a => {
-      const [aYear, aMonth] = a.date.split('-').map(Number);
-      const inMonth = (aYear === year && (aMonth - 1) === month);
-      
-      if (!inMonth) return false;
-      if (calendarPlotId && a.plotId !== calendarPlotId) return false;
-      return true;
-    });
-
-    const grouped: Record<string, Activity[]> = {};
-    filtered.forEach(a => {
-      if (!grouped[a.date]) grouped[a.date] = [];
-      grouped[a.date].push(a);
-    });
-
-    return Object.keys(grouped).sort().map(date => ({
-      date,
-      items: grouped[date]
-    }));
-  }, [activities, calendarDate, calendarPlotId]);
 
   // --- Handlers ---
   const getClassificationOptions = (plotId: string): string[] => {
@@ -1077,13 +1072,27 @@ export default function App() {
           <div className="space-y-6">
              {/* Harvest Header with Filters and Stats */}
              <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-                 <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4 border-b border-gray-100 pb-4">
-                    <h3 className="text-lg font-bold text-gray-900">Análise de Colheita e Vendas</h3>
-                    <div className="w-full md:w-64">
-                       <select className="w-full border border-gray-200 rounded-lg p-2.5 bg-gray-50 text-gray-900 font-medium text-sm" value={harvestFilterPlotId} onChange={e => setHarvestFilterPlotId(e.target.value)}>
-                          <option value="">Geral (Todos os Talhões)</option>
-                          {plots.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                       </select>
+                 <div className="flex flex-col md:flex-row justify-between items-end mb-6 gap-4 border-b border-gray-100 pb-4">
+                    <div>
+                        <h3 className="text-lg font-bold text-gray-900">Análise de Colheita e Vendas</h3>
+                        <p className="text-sm text-gray-500">Filtre por talhão e período para ver estatísticas detalhadas.</p>
+                    </div>
+                    <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
+                         <div>
+                            <label className="text-xs font-bold text-gray-500 block mb-1">Início</label>
+                            <input type="date" className="border border-gray-200 rounded-lg p-2 text-sm bg-gray-50 shadow-none text-gray-900" value={harvestStartDate} onChange={e => setHarvestStartDate(e.target.value)} />
+                         </div>
+                         <div>
+                            <label className="text-xs font-bold text-gray-500 block mb-1">Fim</label>
+                            <input type="date" className="border border-gray-200 rounded-lg p-2 text-sm bg-gray-50 shadow-none text-gray-900" value={harvestEndDate} onChange={e => setHarvestEndDate(e.target.value)} />
+                         </div>
+                         <div className="w-full md:w-48">
+                            <label className="text-xs font-bold text-gray-500 block mb-1">Talhão</label>
+                            <select className="w-full border border-gray-200 rounded-lg p-2 bg-gray-50 text-gray-900 font-medium text-sm" value={harvestFilterPlotId} onChange={e => setHarvestFilterPlotId(e.target.value)}>
+                                <option value="">Geral (Todos)</option>
+                                {plots.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                            </select>
+                        </div>
                     </div>
                  </div>
                  
@@ -1126,10 +1135,20 @@ export default function App() {
                         <tr><th className="px-6 py-4">Data</th><th className="px-6 py-4">Talhão</th><th className="px-6 py-4">Classificação</th><th className="px-6 py-4">Qtd / Preço</th><th className="px-6 py-4 text-right">Total</th><th className="px-6 py-4 text-right">Ação</th></tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200 text-gray-800">
-                        {harvests.filter(h => !harvestFilterPlotId || h.plotId === harvestFilterPlotId).length === 0 ? (
+                        {harvests.filter(h => {
+                            if (harvestFilterPlotId && h.plotId !== harvestFilterPlotId) return false;
+                            if (harvestStartDate && h.date < harvestStartDate) return false;
+                            if (harvestEndDate && h.date > harvestEndDate) return false;
+                            return true;
+                        }).length === 0 ? (
                            <tr><td colSpan={6} className="text-center py-8 text-gray-500 font-medium">Nenhuma colheita registrada para este filtro.</td></tr>
                         ) : (
-                           harvests.filter(h => !harvestFilterPlotId || h.plotId === harvestFilterPlotId).map(h => (
+                           harvests.filter(h => {
+                            if (harvestFilterPlotId && h.plotId !== harvestFilterPlotId) return false;
+                            if (harvestStartDate && h.date < harvestStartDate) return false;
+                            if (harvestEndDate && h.date > harvestEndDate) return false;
+                            return true;
+                        }).map(h => (
                            <tr key={h.id} className="hover:bg-gray-50">
                               <td className="px-6 py-4 text-gray-700 font-medium">{formatDate(h.date)}</td>
                               <td className="px-6 py-4"><div className="font-bold text-gray-900">{plots.find(p => p.id === h.plotId)?.name}</div></td>
